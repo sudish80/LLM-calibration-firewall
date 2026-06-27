@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response, Security, status
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, Security, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
@@ -15,6 +16,7 @@ from llmfirewall import HybridNeuralFirewall
 from llmfirewall.audit import AuditLogger
 from llmfirewall.cache import ModerationCache
 from llmfirewall.config import settings
+from llmfirewall.dashboard import render_dashboard
 from llmfirewall.metrics import (
     metrics_endpoint,
     models_loaded,
@@ -23,14 +25,18 @@ from llmfirewall.metrics import (
 )
 from llmfirewall.patterns import PatternManager, SeedManager
 from llmfirewall.schemas import (
+    HealthDetailedResponse,
     HealthResponse,
     ModerateRequest,
     ModerateResponse,
     ModerationResult,
+    VersionInfo,
 )
 from llmfirewall.vector_firewall import EnhancedVectorFirewall
 
 logger = logging.getLogger(__name__)
+
+_start_time = time.monotonic()
 
 
 class JsonFormatter(logging.Formatter):
@@ -92,7 +98,7 @@ def _check_rate_limit(request: Request) -> None:
 
 
 async def rate_limit_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-    if request.url.path not in ("/metrics", "/health"):
+    if request.url.path not in ("/metrics", "/health", "/v1/health", "/dashboard"):
         _check_rate_limit(request)
     return await call_next(request)
 
@@ -145,15 +151,13 @@ def verify_auth(
     if not settings.api_key and not settings.jwt_secret:
         return
     if api_key and settings.api_key and api_key == settings.api_key:
-        logger.debug("Authenticated via API key")
         return
     if bearer and settings.jwt_secret:
         try:
             jwt.decode(bearer.credentials, settings.jwt_secret, algorithms=["HS256"])
-            logger.debug("Authenticated via JWT")
             return
-        except JWTError as e:
-            logger.warning("JWT validation failed: %s", e)
+        except JWTError:
+            pass
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing credentials")
 
 
@@ -167,23 +171,55 @@ def _validate_input(text: str) -> None:
         )
 
 
-@app.get("/health", response_model=HealthResponse)
-def health(request: Request):
-    return HealthResponse(
-        status="ok",
-        version="1.0.0",
-        layers=["structural", "intent", "toxicity", "semantic", "neural"],
+# ---------------------------------------------------------------------------
+# Versioned API router  (/v1/*)
+# ---------------------------------------------------------------------------
+v1 = APIRouter(prefix="/v1")
+
+
+@v1.get("/version", response_model=VersionInfo)
+def get_version():
+    return VersionInfo(
+        models={
+            "toxicity": settings.model_toxicity,
+            "intent": settings.model_intent,
+            "sentiment": settings.model_sentiment,
+        }
     )
 
 
-@app.get("/metrics")
-def metrics(request: Request):
-    body, content_type = metrics_endpoint()
-    return Response(content=body, media_type=content_type)
+@v1.get("/health", response_model=HealthResponse)
+def health_v1():
+    uptime = time.monotonic() - _start_time
+    model_status: dict[str, bool] = {}
+    if firewall:
+        model_status["toxicity"] = firewall.is_model_healthy("toxicity")
+        model_status["intent"] = firewall.is_model_healthy("intent")
+        model_status["sentiment"] = firewall.is_model_healthy("sentiment")
+        model_status["chromadb"] = getattr(firewall, "_chromadb_healthy", False)
+    return HealthResponse(
+        status="ok" if all(model_status.values()) else "degraded",
+        version="1.0.0",
+        layers=["structural", "intent", "toxicity", "semantic", "neural"],
+        models=model_status,
+        uptime_seconds=round(uptime, 2),
+    )
 
 
-@app.post("/moderate", response_model=ModerateResponse, dependencies=[Security(verify_auth)])
-def moderate(req: ModerateRequest, request: Request):
+@v1.get("/health-detailed", response_model=HealthDetailedResponse)
+def health_detailed_v1():
+    base = health_v1()
+    return HealthDetailedResponse(
+        **base.model_dump(),
+        cache_size=cache.stats["size"] if cache else None,
+        cache_hit_rate=cache.stats["hit_rate"] if cache else None,
+        audit_records=audit.stats["total_records"] if audit else None,
+        seed_count=len(seed_manager.list_seeds()) if seed_manager else None,
+    )
+
+
+@v1.post("/moderate", response_model=ModerateResponse, dependencies=[Security(verify_auth)])
+def moderate_v1(req: ModerateRequest, request: Request):
     _validate_input(req.text)
     if firewall is None:
         raise HTTPException(status_code=503, detail="Firewall not initialized")
@@ -215,8 +251,8 @@ def moderate(req: ModerateRequest, request: Request):
         raise HTTPException(status_code=500, detail=f"Moderation error: {e}")
 
 
-@app.post("/moderate/batch", response_model=list[ModerateResponse], dependencies=[Security(verify_auth)])
-def moderate_batch(reqs: list[ModerateRequest], request: Request):
+@v1.post("/moderate/batch", response_model=list[ModerateResponse], dependencies=[Security(verify_auth)])
+def moderate_batch_v1(reqs: list[ModerateRequest], request: Request):
     if firewall is None:
         raise HTTPException(status_code=503, detail="Firewall not initialized")
     results: list[ModerateResponse] = []
@@ -249,6 +285,49 @@ def moderate_batch(reqs: list[ModerateRequest], request: Request):
                 )
             )
     return results
+
+
+app.include_router(v1)
+
+# ---------------------------------------------------------------------------
+# Legacy (backward-compatible) endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health", response_model=HealthResponse)
+def health_legacy():
+    return health_v1()
+
+
+@app.get("/metrics")
+def metrics():
+    body, content_type = metrics_endpoint()
+    return Response(content=body, media_type=content_type)
+
+
+@app.post("/moderate", response_model=ModerateResponse, dependencies=[Security(verify_auth)])
+def moderate_legacy(req: ModerateRequest, request: Request):
+    return moderate_v1(req, request)
+
+
+@app.post("/moderate/batch", response_model=list[ModerateResponse], dependencies=[Security(verify_auth)])
+def moderate_batch_legacy(reqs: list[ModerateRequest], request: Request):
+    return moderate_batch_v1(reqs, request)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard():
+    return HTMLResponse(content=render_dashboard())
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/admin/cache", dependencies=[Security(verify_auth)])

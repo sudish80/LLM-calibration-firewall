@@ -7,7 +7,7 @@ import torch.optim as optim
 
 from llmfirewall.config import settings
 from llmfirewall.vector_firewall import EnhancedVectorFirewall
-from llmfirewall.schemas import ModerationResult
+from llmfirewall.schemas import ModerationResult, LayerContribution
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,11 @@ class HybridNeuralFirewall(EnhancedVectorFirewall):
             results.allowed = False
             results.reasons = [r for r in results.reasons if "Educational" not in r]
             if not any("Neural Judge Strict Block" in r for r in results.reasons):
-                results.reasons.append(f"Neural Judge Strict Block (Risk: {neural_risk:.2f})")
+                reason = f"Neural Judge Strict Block (Risk: {neural_risk:.2f})"
+                results.reasons.append(reason)
+            results.layer_contributions.append(
+                LayerContribution(layer="neural", score=neural_risk, detail="Hard block: risk > threshold")
+            )
             return results
 
         if (is_edu_profile or is_protective) and neural_risk < settings.neural_edu_override_threshold:
@@ -89,10 +93,23 @@ class HybridNeuralFirewall(EnhancedVectorFirewall):
             results.reasons = [r for r in results.reasons if "Semantic" not in r and "Neural" not in r]
             if "Educational Intent Override applied" not in results.reasons:
                 results.reasons.append("Educational Intent Override applied")
+            results.layer_contributions.append(
+                LayerContribution(layer="neural", score=neural_risk, detail="Educational override applied")
+            )
 
         elif neural_risk > settings.neural_moderate_block_threshold:
             results.allowed = False
             if not any("Neural Judge" in r for r in results.reasons):
                 results.reasons.append(f"Neural Judge block (Risk: {neural_risk:.2f})")
+            results.layer_contributions.append(
+                LayerContribution(layer="neural", score=neural_risk, detail="Moderate block: risk > threshold")
+            )
+        else:
+            results.layer_contributions.append(
+                LayerContribution(layer="neural", score=neural_risk, detail="Below block threshold")
+            )
 
         return results
+
+    async def moderate_async(self, text: str) -> ModerationResult:
+        return self.moderate(text)
