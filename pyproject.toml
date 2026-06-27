@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmfirewall"
+version = "1.0.0"
+description = "Hybrid Neural LLM Firewall — Multi-layer content moderation for LLM inputs"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+
+authors = [
+    { name = "LLMFirewall Team" },
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "datasets>=2.0.0",
+    "scikit-learn>=1.2.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "sentencepiece>=0.1.99",
+    "protobuf>=4.21.0",
+    "accelerate>=0.20.0",
+    "chromadb>=0.4.0",
+    "gradio>=4.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "pydantic-settings>=2.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "python-jose[cryptography]>=3.3.0",
+    "prometheus-client>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
+]
+
+[project.scripts]
+llmfirewall = "llmfirewall.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

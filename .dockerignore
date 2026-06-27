@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.git
+.gitignore
+tests/
+.env
+.env.*
+venv/
+.venv/
+data/
+llmfirewall_legacy_colab.py
