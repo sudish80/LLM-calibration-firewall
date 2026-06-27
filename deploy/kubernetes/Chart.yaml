@@ -1,0 +1,11 @@
+apiVersion: v2
+name: llmfirewall
+description: Hybrid Neural LLM Firewall — content moderation for LLM inputs
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - llm
+  - firewall
+  - moderation
+  - safety

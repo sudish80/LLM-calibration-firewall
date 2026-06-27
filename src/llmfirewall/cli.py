@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 from llmfirewall import HybridNeuralFirewall, LLMFirewall
 from llmfirewall.config import load_settings, settings
 from llmfirewall.server import main as server_main
+from llmfirewall.repl import run_repl, run_batch
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +131,19 @@ def main() -> None:
     gradio_parser.add_argument("--share", action="store_true", help="Create a public shareable link")
     gradio_parser.add_argument("--port", type=int, default=None, help="Port to run on")
 
+    repl_parser = sub.add_parser("repl", help="Interactive REPL for testing inputs")
+
+    batch_parser = sub.add_parser("batch", help="Batch moderate inputs from file or args")
+    batch_parser.add_argument("files", nargs="*", help="Text files or CSV/JSONL files to process")
+    batch_parser.add_argument("--format", choices=["text", "json", "csv"], default="text", help="Output format")
+    batch_parser.add_argument("--neural", action="store_true", help="Use full HybridNeuralFirewall")
+
+    stats_parser = sub.add_parser("stats", help="Show usage statistics from audit log")
+    stats_parser.add_argument("--path", default="./data/audit.jsonl", help="Path to audit log file")
+
+    config_init_parser = sub.add_parser("config-init", help="Scaffold a default firewall.yaml config file")
+    config_init_parser.add_argument("--output", default="firewall.yaml", help="Output path")
+
     args = parser.parse_args()
 
     if args.config:
@@ -155,6 +170,19 @@ def main() -> None:
         server_main()
     elif args.command == "gradio":
         gradio_cli(args)
+    elif args.command == "repl":
+        firewall = HybridNeuralFirewall()
+        run_repl(firewall)
+    elif args.command == "batch":
+        firewall = HybridNeuralFirewall()
+        run_batch(firewall, args.files, output_format=args.format)
+    elif args.command == "stats":
+        from llmfirewall.audit import AuditLogger
+        al = AuditLogger(args.path)
+        print(json.dumps(al.stats, indent=2))
+    elif args.command == "config-init":
+        from llmfirewall.config import scaffold_config
+        scaffold_config(args.output)
     else:
         parser.print_help()
         sys.exit(1)

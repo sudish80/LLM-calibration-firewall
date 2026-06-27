@@ -133,3 +133,43 @@ def load_settings(config_path: Optional[str] = None) -> FirewallSettings:
 
 
 settings = load_settings()
+
+
+def scaffold_config(output_path: str = "firewall.yaml") -> None:
+    template = {
+        "toxicity_threshold": 0.5,
+        "sentiment_threshold": 0.9,
+        "semantic_threshold": 0.8,
+        "neural_hard_block_threshold": 0.75,
+        "neural_moderate_block_threshold": 0.6,
+        "neural_edu_override_threshold": 0.6,
+        "edu_override_score": 0.35,
+        "device": "auto",
+        "chromadb_persist_directory": "./data/chromadb",
+        "model_cache_dir": "./data/models",
+        "model_toxicity": "unitary/toxic-bert",
+        "model_intent": "facebook/bart-large-mnli",
+        "model_sentiment": "distilbert-base-uncased-finetuned-sst-2-english",
+        "server_host": "0.0.0.0",
+        "server_port": 8000,
+        "server_log_level": "info",
+        "server_log_format": "text",
+        "server_workers": 1,
+        "server_rate_limit_max": 60,
+        "server_rate_limit_window": 60.0,
+        "cors_origins": ["*"],
+        "max_input_length": 10000,
+        "api_key": None,
+        "jwt_secret": None,
+        "cache_maxsize": 10000,
+        "cache_ttl": 300.0,
+        "audit_log_path": "./data/audit.jsonl",
+    }
+    out = Path(output_path)
+    if out.exists():
+        logger.warning("Config already exists at %s, will not overwrite", out)
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w") as f:
+        yaml.dump(template, f, default_flow_style=False, sort_keys=False)
+    logger.info("Scaffolded config at %s", out)

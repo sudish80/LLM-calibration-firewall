@@ -1,0 +1,39 @@
+replicaCount: 2
+
+image:
+  repository: llmfirewall
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    memory: "2Gi"
+    cpu: "1"
+  limits:
+    memory: "8Gi"
+    cpu: "4"
+
+env:
+  LLMFW_TOXICITY_THRESHOLD: "0.5"
+  LLMFW_SEMANTIC_THRESHOLD: "0.8"
+  LLMFW_DEVICE: "cpu"
+  LLMFW_SERVER_WORKERS: "2"
+  LLMFW_CACHE_MAXSIZE: "50000"
+  LLMFW_AUDIT_LOG_PATH: "/data/audit.jsonl"
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+
+ingress:
+  enabled: false
+  host: firewall.example.com

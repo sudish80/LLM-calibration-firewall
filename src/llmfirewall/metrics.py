@@ -47,6 +47,28 @@ rate_limit_blocks = Counter(
     "Requests blocked by rate limiter",
 )
 
+layer_latency = Histogram(
+    "llmfirewall_layer_latency_seconds",
+    "Per-layer latency in seconds",
+    ["layer"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
+
+total_api_keys = Gauge(
+    "llmfirewall_total_api_keys",
+    "Total number of active API keys",
+)
+
+sql_injection_blocks = Counter(
+    "llmfirewall_sql_injection_blocks_total",
+    "SQL injection attempts blocked",
+)
+
+encoding_blocks = Counter(
+    "llmfirewall_encoding_blocks_total",
+    "Requests blocked by encoded payload detection",
+)
+
 
 def track_moderation(allowed: bool, elapsed: float, reasons: list[str]) -> None:
     moderation_total.labels(allowed="true" if allowed else "false").inc()
@@ -54,6 +76,10 @@ def track_moderation(allowed: bool, elapsed: float, reasons: list[str]) -> None:
     if not allowed:
         for reason in reasons:
             block_reasons_total.labels(reason=reason).inc()
+
+
+def track_layer(layer: str, elapsed: float) -> None:
+    layer_latency.labels(layer=layer).observe(elapsed)
 
 
 def metrics_endpoint() -> tuple[str, str]:

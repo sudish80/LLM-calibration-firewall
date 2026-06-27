@@ -15,6 +15,10 @@ from llmfirewall.schemas import (
     LayerContribution,
 )
 from llmfirewall.exceptions import ModelLoadError
+from llmfirewall.encoding import analyze_encoding, deobfuscate
+from llmfirewall.security_layer import scan_text as security_scan_text
+from llmfirewall.rules import apply_denylist, scan_custom_rules
+from llmfirewall.metrics import encoding_blocks, sql_injection_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +114,35 @@ class LLMFirewall:
         contributions: list[LayerContribution] = []
         reasons: list[str] = []
         allowed = True
+
+        encoding_info = analyze_encoding(text)
+        if encoding_info["has_homoglyphs"] or encoding_info["has_unicode_obfuscation"]:
+            text = deobfuscate(text)
+            reasons.append("Encoding obfuscation detected")
+            allowed = False
+            contributions.append(LayerContribution(layer="encoding", score=1.0, detail="Unicode/homoglyph obfuscation"))
+            encoding_blocks.inc()
+        else:
+            contributions.append(LayerContribution(layer="encoding", score=0.0, detail="No encoding issues"))
+
+        security_reasons = security_scan_text(text)
+        for sr in security_reasons:
+            reasons.append(sr)
+            allowed = False
+            if "SQLi" in sr:
+                sql_injection_blocks.inc()
+        if security_reasons:
+            contributions.append(LayerContribution(layer="security", score=1.0, detail="; ".join(security_reasons)))
+        else:
+            contributions.append(LayerContribution(layer="security", score=0.0, detail="No security issues"))
+
+        if apply_denylist(text, reasons):
+            allowed = False
+            contributions.append(LayerContribution(layer="denylist", score=1.0, detail="Denylist match"))
+
+        if scan_custom_rules(text, reasons):
+            allowed = False
+            contributions.append(LayerContribution(layer="rules", score=1.0, detail="Custom rule matched"))
 
         if self.detect_pii(text):
             allowed = False

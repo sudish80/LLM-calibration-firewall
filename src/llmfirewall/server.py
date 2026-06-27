@@ -33,6 +33,23 @@ from llmfirewall.schemas import (
     VersionInfo,
 )
 from llmfirewall.vector_firewall import EnhancedVectorFirewall
+from llmfirewall.auth import (
+    generate_api_key, revoke_api_key, list_api_keys, verify_api_key,
+    set_quota, get_quota, get_usage_stats, check_quota,
+    set_tier_rate_limit, get_tier_rate_limit, KEY_USAGE,
+)
+from llmfirewall.rules import (
+    list_rules, add_custom_rule, remove_custom_rule, test_rule,
+    add_allowlist, remove_allowlist, list_allowlist,
+    add_denylist, remove_denylist, list_denylist,
+)
+from llmfirewall.encoding import analyze_encoding, deobfuscate
+from llmfirewall.security_layer import (
+    configure_ip_lists, check_ip, sql_injection_scan, ssrf_scan,
+    _IP_ALLOWLIST, _IP_BLOCKLIST,
+)
+from llmfirewall.webhooks import register_webhook, remove_webhook, list_webhooks
+from llmfirewall.repl import run_batch
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +302,203 @@ def moderate_batch_v1(reqs: list[ModerateRequest], request: Request):
                 )
             )
     return results
+
+
+# ---------------------------------------------------------------------------
+# v1: Admin / Management endpoints
+# ---------------------------------------------------------------------------
+
+
+@v1.post("/admin/config/reload", dependencies=[Security(verify_auth)])
+def admin_config_reload():
+    from llmfirewall.config import load_settings
+    global settings
+    new_settings = load_settings()
+    for key, val in new_settings.model_dump().items():
+        setattr(settings, key, val)
+    logger.info("Configuration reloaded")
+    return {"status": "ok", "message": "Configuration reloaded"}
+
+
+@v1.get("/admin/keys", dependencies=[Security(verify_auth)])
+def admin_list_api_keys():
+    return {"keys": list_api_keys()}
+
+
+@v1.post("/admin/keys", dependencies=[Security(verify_auth)])
+def admin_create_api_key(label: str = ""):
+    key = generate_api_key(label)
+    return {"api_key": key, "prefix": key[:16]}
+
+
+@v1.post("/admin/keys/revoke", dependencies=[Security(verify_auth)])
+def admin_revoke_api_key(body: dict):
+    kh = body.get("key_hash", "")
+    ok = revoke_api_key(kh)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"status": "ok"}
+
+
+@v1.post("/admin/keys/quota", dependencies=[Security(verify_auth)])
+def admin_set_quota(body: dict):
+    kh = body.get("key_hash", "")
+    quota = body.get("max_requests", 0)
+    if not kh or quota < 1:
+        raise HTTPException(status_code=400, detail="Invalid key_hash or max_requests")
+    set_quota(kh, quota)
+    return {"status": "ok", "key_hash": kh, "max_requests": quota}
+
+
+@v1.get("/admin/keys/usage/{key_hash}", dependencies=[Security(verify_auth)])
+def admin_key_usage(key_hash: str):
+    return get_usage_stats(key_hash)
+
+
+@v1.post("/admin/rate-limit/tier", dependencies=[Security(verify_auth)])
+def admin_set_tier_rate_limit(body: dict):
+    tier = body.get("tier", "default")
+    limit = body.get("max_per_minute", 60)
+    set_tier_rate_limit(tier, limit)
+    return {"status": "ok", "tier": tier, "max_per_minute": limit}
+
+
+@v1.post("/admin/ip-lists", dependencies=[Security(verify_auth)])
+def admin_configure_ip_lists(body: dict):
+    configure_ip_lists(
+        allowlist=body.get("allowlist"),
+        blocklist=body.get("blocklist"),
+    )
+    return {"status": "ok", "allowlist": _IP_ALLOWLIST, "blocklist": _IP_BLOCKLIST}
+
+
+@v1.get("/admin/rules", dependencies=[Security(verify_auth)])
+def admin_list_rules():
+    return {"rules": list_rules(), "allowlist": list_allowlist(), "denylist": list_denylist()}
+
+
+@v1.post("/admin/rules", dependencies=[Security(verify_auth)])
+def admin_add_rule(body: dict):
+    name = body.get("name", "")
+    pattern = body.get("pattern", "")
+    if not name or not pattern:
+        raise HTTPException(status_code=400, detail="Missing 'name' or 'pattern'")
+    add_custom_rule(name, pattern)
+    return {"status": "ok", "name": name}
+
+
+@v1.delete("/admin/rules", dependencies=[Security(verify_auth)])
+def admin_remove_rule(body: dict):
+    name = body.get("name", "")
+    ok = remove_custom_rule(name)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"status": "ok"}
+
+
+@v1.post("/admin/rules/test", dependencies=[Security(verify_auth)])
+def admin_test_rule(body: dict):
+    pattern = body.get("pattern", "")
+    text = body.get("text", "")
+    return test_rule(pattern, text)
+
+
+@v1.post("/admin/allowlist", dependencies=[Security(verify_auth)])
+def admin_add_allowlist(body: dict):
+    word = body.get("word", "")
+    if not word:
+        raise HTTPException(status_code=400, detail="Missing 'word'")
+    add_allowlist(word)
+    return {"status": "ok"}
+
+
+@v1.delete("/admin/allowlist", dependencies=[Security(verify_auth)])
+def admin_remove_allowlist(body: dict):
+    word = body.get("word", "")
+    ok = remove_allowlist(word)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Word not in allowlist")
+    return {"status": "ok"}
+
+
+@v1.post("/admin/denylist", dependencies=[Security(verify_auth)])
+def admin_add_denylist(body: dict):
+    word = body.get("word", "")
+    if not word:
+        raise HTTPException(status_code=400, detail="Missing 'word'")
+    add_denylist(word)
+    return {"status": "ok"}
+
+
+@v1.delete("/admin/denylist", dependencies=[Security(verify_auth)])
+def admin_remove_denylist(body: dict):
+    word = body.get("word", "")
+    ok = remove_denylist(word)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Word not in denylist")
+    return {"status": "ok"}
+
+
+@v1.post("/admin/encoding/analyze", dependencies=[Security(verify_auth)])
+def admin_analyze_encoding(body: dict):
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="Missing 'text'")
+    return analyze_encoding(text)
+
+
+@v1.post("/admin/security/scan", dependencies=[Security(verify_auth)])
+def admin_security_scan(body: dict):
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="Missing 'text'")
+    return {"sql_injection": sql_injection_scan(text), "ssrf": ssrf_scan(text)}
+
+
+@v1.get("/admin/webhooks", dependencies=[Security(verify_auth)])
+def admin_list_webhooks():
+    return {"webhooks": list_webhooks()}
+
+
+@v1.post("/admin/webhooks", dependencies=[Security(verify_auth)])
+def admin_register_webhook(body: dict):
+    url = body.get("url", "")
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing 'url'")
+    events = body.get("events")
+    secret = body.get("secret", "")
+    hook = register_webhook(url, events, secret)
+    return {"status": "ok", "webhook": hook}
+
+
+@v1.delete("/admin/webhooks", dependencies=[Security(verify_auth)])
+def admin_remove_webhook(body: dict):
+    url = body.get("url", "")
+    ok = remove_webhook(url)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return {"status": "ok"}
+
+
+@v1.get("/admin/audit", dependencies=[Security(verify_auth)])
+def admin_audit_log(page: int = 1, per_page: int = 50):
+    if audit is None:
+        raise HTTPException(status_code=503, detail="Audit not available")
+    stats = audit.stats
+    return {
+        "page": page,
+        "per_page": per_page,
+        "total_records": stats["total_records"],
+        "stats": stats,
+    }
+
+
+@v1.get("/admin/rate-limits", dependencies=[Security(verify_auth)])
+def admin_rate_limits():
+    return {
+        "rate_limiter_size": len(_rate_limiter),
+        "tier_limits": {tier: get_tier_rate_limit(tier) for tier in ["default"]},
+    }
 
 
 app.include_router(v1)

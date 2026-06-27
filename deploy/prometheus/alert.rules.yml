@@ -1,0 +1,42 @@
+groups:
+  - name: llmfirewall
+    rules:
+      - alert: HighBlockRate
+        expr: rate(llmfirewall_block_reasons_total[5m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High block rate ({{ $value }}/s)"
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(llmfirewall_moderation_latency_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 latency > 5s ({{ $value }}s)"
+
+      - alert: ModelDown
+        expr: llmfirewall_models_loaded == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Model {{ $labels.model }} is down"
+
+      - alert: RateLimitSpike
+        expr: rate(llmfirewall_rate_limit_blocks_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Rate limit blocks spike ({{ $value }}/s)"
+
+      - alert: NoTraffic
+        expr: rate(llmfirewall_moderation_total[10m]) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No moderation traffic for 30 minutes"

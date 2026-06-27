@@ -1,0 +1,57 @@
+{
+  "title": "LLM Firewall",
+  "uid": "llmfirewall",
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "Moderation Rate",
+      "type": "stat",
+      "datasource": "prometheus",
+      "targets": [{"expr": "rate(llmfirewall_moderation_total[5m])", "legendFormat": "{{allowed}}"}],
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0}
+    },
+    {
+      "title": "Block Rate by Reason",
+      "type": "pie",
+      "datasource": "prometheus",
+      "targets": [{"expr": "rate(llmfirewall_block_reasons_total[5m])", "legendFormat": "{{reason}}"}],
+      "gridPos": {"h": 4, "w": 8, "x": 4, "y": 0}
+    },
+    {
+      "title": "Latency (p95)",
+      "type": "stat",
+      "datasource": "prometheus",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(llmfirewall_moderation_latency_seconds_bucket[5m]))", "legendFormat": "p95"}],
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0}
+    },
+    {
+      "title": "Model Health",
+      "type": "stat",
+      "datasource": "prometheus",
+      "targets": [{"expr": "llmfirewall_models_loaded", "legendFormat": "{{model}}"}],
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0}
+    },
+    {
+      "title": "Latency Heatmap",
+      "type": "heatmap",
+      "datasource": "prometheus",
+      "targets": [{"expr": "rate(llmfirewall_moderation_latency_seconds_bucket[5m])"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+    },
+    {
+      "title": "Cache Hit Rate",
+      "type": "stat",
+      "datasource": "prometheus",
+      "targets": [{"expr": "rate(llmfirewall_cache_hits_total[5m]) / (rate(llmfirewall_cache_hits_total[5m]) + rate(llmfirewall_cache_misses_total[5m]))", "legendFormat": "Hit Rate"}],
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 4}
+    },
+    {
+      "title": "Rate Limit Blocks",
+      "type": "stat",
+      "datasource": "prometheus",
+      "targets": [{"expr": "rate(llmfirewall_rate_limit_blocks_total[5m])", "legendFormat": "Blocks"}],
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 4}
+    }
+  ]
+}
